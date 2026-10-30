@@ -21,7 +21,10 @@ def send [text: string] {
         error make {msg: "WATCHDOG_BOT_TOKEN is not set"}
     }
     let url = $"https://api.telegram.org/bot($env.WATCHDOG_BOT_TOKEN)/sendMessage"
-    let resp = (http post $url {chat_id: $env.WATCHDOG_CHAT_ID, text: $text})
+    # Explicit JSON: the runner's stable nu does not auto-serialize
+    # records in http post (accepted types there: binary, string).
+    let body = ({chat_id: ($env.WATCHDOG_CHAT_ID | into string), text: $text} | to json)
+    let resp = (http post --content-type "application/json" $url $body)
     if ($resp.ok? != true) {
         error make {msg: $"telegram send failed: ($resp.description? | default 'unknown')"}
     }
