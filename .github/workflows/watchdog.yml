@@ -26,4 +26,5 @@ jobs:
         env:
           WATCHDOG_BOT_TOKEN: ${{ secrets.WATCHDOG_BOT_TOKEN }}
           WATCHDOG_CHAT_ID: ${{ secrets.WATCHDOG_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: nu watchdog-check.nu --loop-seconds 240 --simulate-stale-minutes ${{ inputs.simulate_stale_minutes || '0' }}

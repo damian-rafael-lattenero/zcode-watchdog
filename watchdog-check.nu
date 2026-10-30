@@ -8,6 +8,7 @@
 # Mac's getUpdates monopoly (bot ADR-001). Stable-Nushell compatible on
 # purpose: the CI runner installs the latest release, not the nightly.
 
+const GIST_ID = "d61ac1dd354d8d69579a2df683db1688"
 const GIST_RAW = "https://gist.githubusercontent.com/damian-rafael-lattenero/d61ac1dd354d8d69579a2df683db1688/raw/beacon.json"
 const STALE_AFTER_S = 150
 const POLL_EVERY_S = 30
@@ -95,7 +96,13 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
     mut warned_poll = false
     mut undelivered = false
     loop {
-        let beacon = (http get $GIST_RAW)
+        # Via the API, NOT the raw URL: gist.githubusercontent.com is CDN-
+        # cached for minutes (measured live 30/10: a healthy beacon read as
+        # 2 min stale → a FALSE 💀). The API answer is always fresh.
+        let api = $"https://api.github.com/gists/($GIST_ID)"
+        let raw = (http get --headers {Authorization: $"Bearer ($env.GITHUB_TOKEN | default '')"} $api
+            | get files.beacon.json.content)
+        let beacon = ($raw | from json)
         let stale_s = ((now_epoch) - ($beacon.epoch | into int))
         let mins = ($stale_s // 60)
         if $stale_s > $STALE_AFTER_S {
@@ -114,7 +121,7 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
             # The Mac reaches GitHub but not Telegram: different disease,
             # different message.
             if not $warned_poll {
-                if (send $"⚠️ watchdog: Mac viva \(beacon hace $mins min\) pero su poller a Telegram falla — la Mac llega a GitHub pero no a Telegram.") {
+                if (send $"⚠️ watchdog: Mac viva — beacon hace ($mins) min — pero su poller a Telegram falla. La Mac llega a GitHub pero no a Telegram.") {
                     $warned_poll = true
                     $undelivered = false
                 } else {
@@ -123,7 +130,7 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
             }
         } else {
             if $alerted_dead {
-                if (send $"🔌 watchdog: la Mac volvió a latir \(beacon hace $mins min\).") {
+                if (send $"🔌 watchdog: la Mac volvió a latir — beacon hace ($mins) min.") {
                     $alerted_dead = false
                     $undelivered = false
                 } else {
@@ -135,7 +142,7 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
             # 09:00 ART; a delayed cron just skips the day).
             let hm = (date now | format date "%H%M" | into int)
             if ($first and ($hm >= 1200 and $hm < 1210)) {
-                if (send $"🟡 watchdog vivo — Mac latiendo \(beacon hace $mins min\), poller ok.") {
+                if (send $"🟡 watchdog vivo — Mac latiendo, beacon hace ($mins) min, poller ok.") {
                     $undelivered = false
                 } else {
                     $undelivered = true
