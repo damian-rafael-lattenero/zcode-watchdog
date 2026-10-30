@@ -98,11 +98,11 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
     loop {
         # Via the API, NOT the raw URL: gist.githubusercontent.com is CDN-
         # cached for minutes (measured live 30/10: a healthy beacon read as
-        # 2 min stale → a FALSE 💀). The API answer is always fresh.
+        # 2 min stale → a FALSE 💀). The API answer is always fresh; the
+        # gist is UNLISTED (secret-by-URL), so anonymous reads work and the
+        # Actions token does not cover gists anyway (measured: 403).
         let api = $"https://api.github.com/gists/($GIST_ID)"
-        let raw = (http get --headers {Authorization: $"Bearer ($env.GITHUB_TOKEN | default '')"} $api
-            | get files.beacon.json.content)
-        let beacon = ($raw | from json)
+        let beacon = (http get $api | get files.beacon.json.content | from json)
         let stale_s = ((now_epoch) - ($beacon.epoch | into int))
         let mins = ($stale_s // 60)
         if $stale_s > $STALE_AFTER_S {
