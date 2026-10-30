@@ -24,7 +24,13 @@ def send [text: string] {
     # Explicit JSON: the runner's stable nu does not auto-serialize
     # records in http post (accepted types there: binary, string).
     let body = ({chat_id: ($env.WATCHDOG_CHAT_ID | into string), text: $text} | to json)
-    let resp = (http post --content-type "application/json" $url $body)
+    let resp = (try {
+        http post --content-type "application/json" $url $body
+    } catch {|err|
+        # The honest degenerate: if the bot itself is flood-penalized the
+        # alert cannot voice — say it and fail LOUD (a red run is visible).
+        error make {msg: $"ALERT UNDELIVERABLE — Telegram rejected the send ($err.msg | str substring 0..160)"}
+    })
     if ($resp.ok? != true) {
         error make {msg: $"telegram send failed: ($resp.description? | default 'unknown')"}
     }
