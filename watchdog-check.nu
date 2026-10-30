@@ -102,7 +102,7 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
         # gist is UNLISTED (secret-by-URL), so anonymous reads work and the
         # Actions token does not cover gists anyway (measured: 403).
         let api = $"https://api.github.com/gists/($GIST_ID)"
-        let beacon = (http get $api | get files.beacon.json.content | from json)
+        let beacon = (http get $api | get files."beacon.json".content | from json)
         let stale_s = ((now_epoch) - ($beacon.epoch | into int))
         let mins = ($stale_s // 60)
         if $stale_s > $STALE_AFTER_S {
