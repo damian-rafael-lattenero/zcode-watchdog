@@ -17,67 +17,129 @@ def now_epoch [] {
 }
 
 def send [text: string] {
+    # Missing config is a broken setup, not a transient failure: say it
+    # clearly and return false so the caller can decide what to do.
     if ($env.WATCHDOG_BOT_TOKEN? | is-empty) {
-        error make {msg: "WATCHDOG_BOT_TOKEN is not set"}
+        print "send ERROR: WATCHDOG_BOT_TOKEN is not set"
+        return false
     }
+    if ($env.WATCHDOG_CHAT_ID? | is-empty) {
+        print "send ERROR: WATCHDOG_CHAT_ID is not set"
+        return false
+    }
+
     let url = $"https://api.telegram.org/bot($env.WATCHDOG_BOT_TOKEN)/sendMessage"
     # Explicit JSON: the runner's stable nu does not auto-serialize
     # records in http post (accepted types there: binary, string).
     let body = ({chat_id: ($env.WATCHDOG_CHAT_ID | into string), text: $text} | to json)
-    let resp = (try {
-        http post --content-type "application/json" $url $body
-    } catch {|err|
-        # The honest degenerate: if the bot itself is flood-penalized the
-        # alert cannot voice — say it and fail LOUD (a red run is visible).
-        error make {msg: $"ALERT UNDELIVERABLE — Telegram rejected the send ($err.msg | str substring 0..160)"}
-    })
-    if ($resp.ok? != true) {
-        error make {msg: $"telegram send failed: ($resp.description? | default 'unknown')"}
+
+    let max_retries = 3
+    let backoff_s = 5
+    mut attempt = 0
+    mut delivered = false
+    mut last_error = ''
+
+    loop {
+        $attempt = ($attempt + 1)
+        # The catch closure may not capture mutable vars, so it only
+        # builds a value; all mutation happens outside it.
+        let outcome = (try {
+            {kind: 'response', resp: (http post --content-type "application/json" $url $body)}
+        } catch {|err|
+            {kind: 'network', error: ($err.msg | str substring 0..200)}
+        })
+
+        if ($outcome.kind == 'response') {
+            let resp = $outcome.resp
+            if ($resp.ok? == true) {
+                print $"sent: ($text | str substring 0..60)..."
+                $delivered = true
+                break
+            }
+            $last_error = $"Telegram API code=($resp.error_code? | default '?') desc=($resp.description? | default 'unknown')"
+            if ($resp.error_code? == 429) {
+                print "send: flood control (429), waiting 10s before retry"
+                sleep (10 * 1sec)
+            } else {
+                sleep ($backoff_s * 1sec)
+            }
+        } else {
+            $last_error = $"network error: ($outcome.error)"
+            sleep ($backoff_s * 1sec)
+        }
+
+        if ($attempt >= $max_retries) {
+            break
+        }
     }
-    print $"sent: ($text | str substring 0..60)..."
+
+    if not $delivered {
+        print $"send ERROR: FAILED after ($max_retries) attempts — alert NOT delivered to Telegram. Last error: $last_error"
+        print $"send ERROR: message was: ($text | str substring 0..160)"
+    }
+    return $delivered
 }
 
 def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
     # The forced path proves the whole circuit (runner → gist read →
     # Telegram send) without needing a real outage.
     if $simulate_stale_minutes > 0 {
-        send $"[TEST] 💀 watchdog: simulación — la Mac llevaría ($simulate_stale_minutes) min sin latir. Si ves esto, el circuito Mac→gist→GitHub→Telegram está vivo."
+        if not (send $"[TEST] 💀 watchdog: simulación — la Mac llevaría ($simulate_stale_minutes) min sin latir. Si ves esto, el circuito Mac→gist→GitHub→Telegram está vivo.") {
+            error make {msg: "CIRCUIT TEST FAILED — could not deliver test message to Telegram"}
+        }
         return
     }
     mut slept = 0
     mut first = true
     mut alerted_dead = false
     mut warned_poll = false
+    mut undelivered = false
     loop {
-        let beacon = (http get $GIST_RAW | from json)
+        let beacon = (http get $GIST_RAW)
         let stale_s = ((now_epoch) - ($beacon.epoch | into int))
         let mins = ($stale_s // 60)
         if $stale_s > $STALE_AFTER_S {
             # One 💀 per job (~every 5 min while dead — never radio
             # silence, bounded to 12/hour); the next job re-alerts.
             if not $alerted_dead {
-                send $"💀 watchdog: la Mac no late hace ($mins) min — último beacon ($beacon.iso). Internet cortado, Mac dormida o muerta: el bot de Telegram cayó con ella."
-                $alerted_dead = true
+                if (send $"💀 watchdog: la Mac no late hace ($mins) min — último beacon ($beacon.iso). Internet cortado, Mac dormida o muerta: el bot de Telegram cayó con ella.") {
+                    $alerted_dead = true
+                    $undelivered = false
+                } else {
+                    $undelivered = true
+                }
             }
             $warned_poll = false
         } else if ($beacon.poll_fail_recent? == true) {
             # The Mac reaches GitHub but not Telegram: different disease,
             # different message.
             if not $warned_poll {
-                send $"⚠️ watchdog: Mac viva (beacon hace ($mins) min) pero su poller a Telegram falla — la Mac llega a GitHub pero no a Telegram."
-                $warned_poll = true
+                if (send $"⚠️ watchdog: Mac viva \(beacon hace $mins min\) pero su poller a Telegram falla — la Mac llega a GitHub pero no a Telegram.") {
+                    $warned_poll = true
+                    $undelivered = false
+                } else {
+                    $undelivered = true
+                }
             }
         } else {
             if $alerted_dead {
-                send $"🔌 watchdog: la Mac volvió a latir (beacon hace ($mins) min)."
-                $alerted_dead = false
+                if (send $"🔌 watchdog: la Mac volvió a latir \(beacon hace $mins min\).") {
+                    $alerted_dead = false
+                    $undelivered = false
+                } else {
+                    $undelivered = true
+                }
             }
             $warned_poll = false
             # Once-a-day proof the watchdog itself is alive (12:00 UTC =
             # 09:00 ART; a delayed cron just skips the day).
             let hm = (date now | format date "%H%M" | into int)
             if ($first and ($hm >= 1200 and $hm < 1210)) {
-                send $"🟡 watchdog vivo — Mac latiendo (beacon hace ($mins) min), poller ok."
+                if (send $"🟡 watchdog vivo — Mac latiendo \(beacon hace $mins min\), poller ok.") {
+                    $undelivered = false
+                } else {
+                    $undelivered = true
+                }
             }
         }
         $first = false
@@ -86,5 +148,8 @@ def main [--loop-seconds: int = 0, --simulate-stale-minutes: int = 0] {
             break
         }
         sleep ($POLL_EVERY_S * 1sec)
+    }
+    if $undelivered {
+        error make {msg: "WATCHDOG MUTE — one or more alerts could not be delivered to Telegram (see send ERROR lines above)"}
     }
 }
