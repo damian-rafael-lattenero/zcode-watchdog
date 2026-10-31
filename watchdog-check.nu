@@ -1,12 +1,16 @@
 #!/usr/bin/env nu
 #
-# The other half of the dead man's switch — the vigilante that lives
-# OUTSIDE the Mac's failure domain. Runs on GitHub Actions: a cron job
-# every 5 min, each job polling the Mac's heartbeat gist every 30 s for
-# 4 minutes, so the Mac's death is noticed in ~2-4 minutes. Talks to
-# Telegram DIRECTLY via sendMessage — stateless, it never fights the
-# Mac's getUpdates monopoly (bot ADR-001). Stable-Nushell compatible on
-# purpose: the CI runner installs the latest release, not the nightly.
+# SECONDARY / MANUAL diagnostic. The primary dead man's switch is the
+# hosted heartbeat (healthchecks.io): the Mac's beacon pings it every
+# 60 s, and the service sends the Telegram alert when the pings stop.
+# This script is kept for circuit tests and for reading the diagnostic
+# gist on demand (workflow_dispatch) — it is no longer scheduled, because
+# GitHub's cron degraded to one run every 3-6 h.
+#
+# It talks to Telegram DIRECTLY via sendMessage — stateless, it never
+# fights the Mac's getUpdates monopoly (bot ADR-001). Stable-Nushell
+# compatible on purpose: the CI runner installs the latest release, not
+# the nightly.
 
 const GIST_ID = "d61ac1dd354d8d69579a2df683db1688"
 const GIST_RAW = "https://gist.githubusercontent.com/damian-rafael-lattenero/d61ac1dd354d8d69579a2df683db1688/raw/beacon.json"
