@@ -94,10 +94,14 @@ runs the script every 60 s.
 
 ### 4. Reload the beacon
 
+The `launchctl` domain is the **numeric user ID** (usually `501`), not
+the healthchecks UUID. `$(id -u)` prints it; reading the UUID here is
+the most common mistake.
+
 ```sh
-launchctl bootout gui/$UID/com.zcode.beacon 2>/dev/null || true
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.zcode.beacon.plist
-launchctl kickstart -k gui/$UID/com.zcode.beacon
+launchctl bootout gui/$(id -u)/com.zcode.beacon 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.zcode.beacon.plist
+launchctl kickstart -k gui/$(id -u)/com.zcode.beacon
 ```
 
 Within 1–2 minutes the healthchecks.io dashboard must show a ping, and
@@ -115,12 +119,14 @@ still works, but there is no hosted heartbeat.
 
 1. Stop only the beacon:
    ```sh
-   launchctl bootout gui/$UID/com.zcode.beacon
+   launchctl bootout gui/$(id -u)/com.zcode.beacon
    ```
+   If it says `Could not find service`, it is already stopped — that
+   is fine for the drill.
 2. Wait 2–3 minutes. **`DOWN: zcode Mac` must arrive from @HealthchecksBot.**
 3. Bring it back:
    ```sh
-   launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.zcode.beacon.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.zcode.beacon.plist
    ```
    The next heartbeat produces **`UP: zcode Mac`**.
 
